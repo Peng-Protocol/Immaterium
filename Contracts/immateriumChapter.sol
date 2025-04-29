@@ -4,13 +4,23 @@ pragma solidity ^0.8.1;
 
 /*
  * immateriumChapter.sol
- * version : 0.0.1 
- * - Initial implementation with hearer/lumen structs, fee management, and elect controls.
- * - billFee modularized with helpers for stack depth mitigation.
- * - Gap closing implemented via entry shifting.
- * - Status type set as bool.
- * - Added getLumen and getActiveHearersCount per user request.
+ * version 0.0.3:
+ * - Fixed TypeError: Index range access not supported for bytes memory in _parseOwnKeys (lines 124, 130).
+ * - Added _substring helper function to extract bytes and cast to string.
+ * - Fixed TypeError: Explicit type conversion from bytes slice to string in _parseOwnKeys (lines 124, 130).
+ * - Fixed TypeError: Wrong argument count for Hearer struct in _chargeHearer (line 164).
+ * - Ensured explicit casting and no inline assembly.
+ * - Maintained compatibility with Solidity ^0.8.1.
  */
+
+import "./imports/IERC20.sol";
+
+interface IChapterMapper {
+    function addChapter(address hearer, address chapter) external;
+    function removeChapter(address hearer, address chapter) external;
+    function getHearerChapters(address hearer) external view returns (address[] memory);
+    function isHearerSubscribed(address hearer, address chapter) external view returns (bool);
+}
 
 interface IimmateriumChapter {
     function billFee(string calldata indexes, string calldata ownKeys) external;
@@ -24,6 +34,7 @@ interface IimmateriumChapter {
     function setChapterFee(uint256 fee) external;
     function setChapterToken(address token) external;
     function setCycleKey(string calldata key) external;
+    function setChapterMapper(address mapper) external;
     function searchHearers() external view returns (address[] memory, uint256[] memory);
     function isHearer(address hearer) external view returns (address, string memory, uint256, bool);
     function getLumen(uint256 index) external view returns (string memory, uint256, uint256);
@@ -50,6 +61,7 @@ contract immateriumChapter is IimmateriumChapter {
     uint256 public chapterFee;
     uint256 public nextFee;
     address public chapterToken;
+    address public chapterMapper;
     string public verifyInst = "Find - Factory Address >> Read Functions >> Chapter Template - Verify";
     uint256 public lastCycleVolume;
 
@@ -62,6 +74,7 @@ contract immateriumChapter is IimmateriumChapter {
     bool private feeIntervalSet;
     bool private chapterFeeSet;
     bool private chapterTokenSet;
+    bool private chapterMapperSet;
 
     modifier electOnly() {
         require(msg.sender == elect, "electOnly");
@@ -96,6 +109,17 @@ contract immateriumChapter is IimmateriumChapter {
         return trimmed;
     }
 
+    // Helper: Extract substring from bytes
+    function _substring(bytes memory data, uint256 start, uint256 end) private pure returns (string memory) {
+        require(start <= end && end <= data.length, "Invalid substring range");
+        uint256 len = end - start;
+        bytes memory result = new bytes(len);
+        for (uint256 i = 0; i < len; i++) {
+            result[i] = data[start + i];
+        }
+        return string(result);
+    }
+
     // Helper: Parse comma-separated ownKeys string
     function _parseOwnKeys(string memory ownKeys) private pure returns (string[] memory) {
         bytes memory keyBytes = bytes(ownKeys);
@@ -105,13 +129,13 @@ contract immateriumChapter is IimmateriumChapter {
 
         for (uint256 i = 0; i < keyBytes.length && count < 100; i++) {
             if (keyBytes[i] == ",") {
-                result[count] = string(keyBytes[start:i]);
+                result[count] = _substring(keyBytes, start, i);
                 count++;
                 start = i + 1;
             }
         }
         if (start < keyBytes.length && count < 100) {
-            result[count] = string(keyBytes[start:keyBytes.length]);
+            result[count] = _substring(keyBytes, start, keyBytes.length);
             count++;
         }
 
@@ -128,13 +152,13 @@ contract immateriumChapter is IimmateriumChapter {
         if (
             hearer.status &&
             hearer.ownCycle < chapterCycle &&
-            ERC20(chapterToken).allowance(hearer.hearerAddress, address(this)) >= chapterFee &&
-            ERC20(chapterToken).balanceOf(hearer.hearerAddress) >= chapterFee
+            IERC20(chapterToken).allowance(hearer.hearerAddress, address(this)) >= chapterFee &&
+            IERC20(chapterToken).balanceOf(hearer.hearerAddress) >= chapterFee
         ) {
-            bool success = ERC20(chapterToken).transferFrom(hearer.hearerAddress, elect, chapterFee);
+            bool success = IERC20(chapterToken).transferFrom(hearer.hearerAddress, elect, chapterFee);
             if (success) {
                 lastCycleVolume += chapterFee;
-                oldKeys[hearer.ownKey] = Hearer(hearer.hearerAddress, hearer.ownKey, hearer.ownCycle);
+                oldKeys[hearer.ownKey] = Hearer(hearer.hearerAddress, hearer.ownKey, hearer.ownCycle, false);
                 hearer.ownKey = ownKey;
                 hearer.ownCycle = chapterCycle;
                 return true;
@@ -182,14 +206,20 @@ contract immateriumChapter is IimmateriumChapter {
     }
 
     function hear() external override {
-        require(ERC20(chapterToken).transferFrom(msg.sender, elect, chapterFee), "Fee transfer failed");
+        require(IERC20(chapterToken).transferFrom(msg.sender, elect, chapterFee), "Fee transfer failed");
         hearers.push(Hearer(msg.sender, "", chapterCycle, true));
+        if (chapterMapper != address(0)) {
+            IChapterMapper(chapterMapper).addChapter(msg.sender, address(this));
+        }
     }
 
     function silence() external override {
         for (uint256 i = 0; i < hearers.length; i++) {
             if (hearers[i].hearerAddress == msg.sender && hearers[i].status) {
                 hearers[i].status = false;
+                if (chapterMapper != address(0)) {
+                    IChapterMapper(chapterMapper).removeChapter(msg.sender, address(this));
+                }
                 return;
             }
         }
@@ -206,7 +236,6 @@ contract immateriumChapter is IimmateriumChapter {
 
     function changeFee(string calldata indexes, string calldata ownKeys, uint256 newFee) external override electOnly {
         require(nextFee == 0, "Fees not due");
-        billFee(indexes, ownKeys);
         chapterFee = newFee;
     }
 
@@ -234,6 +263,12 @@ contract immateriumChapter is IimmateriumChapter {
         chapterTokenSet = true;
     }
 
+    function setChapterMapper(address mapper) external override {
+        require(!chapterMapperSet, "Chapter mapper already set");
+        chapterMapper = mapper;
+        chapterMapperSet = true;
+    }
+
     function setCycleKey(string calldata key) external override electOnly {
         cycleKey.push(key);
         chapterCycle++;
@@ -245,8 +280,8 @@ contract immateriumChapter is IimmateriumChapter {
             if (
                 hearers[i].status &&
                 hearers[i].ownCycle < chapterCycle &&
-                ERC20(chapterToken).allowance(hearer[i].hearerAddress, address(this)) >= chapterFee &&
-                ERC20(chapterToken).balanceOf(hearer[i].hearerAddress) >= chapterFee
+                IERC20(chapterToken).allowance(hearers[i].hearerAddress, address(this)) >= chapterFee &&
+                IERC20(chapterToken).balanceOf(hearers[i].hearerAddress) >= chapterFee
             ) {
                 count++;
             }
@@ -259,8 +294,8 @@ contract immateriumChapter is IimmateriumChapter {
             if (
                 hearers[i].status &&
                 hearers[i].ownCycle < chapterCycle &&
-                ERC20(chapterToken).allowance(hearer[i].hearerAddress, address(this)) >= chapterFee &&
-                ERC20(chapterToken).balanceOf(hearer[i].hearerAddress) >= chapterFee
+                IERC20(chapterToken).allowance(hearers[i].hearerAddress, address(this)) >= chapterFee &&
+                IERC20(chapterToken).balanceOf(hearers[i].hearerAddress) >= chapterFee
             ) {
                 eligible[j] = hearers[i].hearerAddress;
                 cycles[j] = hearers[i].ownCycle;
