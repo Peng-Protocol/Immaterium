@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 // OpenZeppelin Contracts (last updated v4.9.0) (token/ERC20/ERC20.sol)
 
+// Elix : Added Transfer and Approval event declarations to fix undeclared identifier errors.
+
 pragma solidity ^0.8.0;
 
 import "./IERC20.sol";
-import "./extensions/IERC20Metadata.sol";
-import "../../utils/Context.sol";
+import "./IERC20Metadata.sol";
+import "./Context.sol";
 
 /**
  * @dev Implementation of the {IERC20} interface.
@@ -44,6 +46,18 @@ contract ERC20 is Context, IERC20, IERC20Metadata {
 
     string private _name;
     string private _symbol;
+
+    /**
+     * @dev Emitted when `value` tokens are moved from one account (`from`) to
+     * another (`to`).
+     */
+    event Transfer(address indexed from, address indexed to, uint256 value);
+
+    /**
+     * @dev Emitted when the allowance of a `spender` for an `owner` is set by
+     * a call to {approve}. `value` is the new allowance.
+     */
+    event Approval(address indexed owner, address indexed spender, uint256 value);
 
     /**
      * @dev Sets the values for {name} and {symbol}.
