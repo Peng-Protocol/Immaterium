@@ -2,7 +2,7 @@
 A decentralized subscription service using asymmetric encryption.
 
 # **General**
-The system is made up of (3) contracts: the `ImmateriumFactory` - `ImmateriumChapter` and `Luminary Token`. 
+The system is made up of (4) contracts: the `ImmateriumFactory` - `ImmateriumChapter` - `chapterMapper`  and `Luminary Token`. 
 
 ## **Immaterium Chapter**
 **Data** 
@@ -81,6 +81,10 @@ Searches all hearer entries and returns full details if the address is a hearer,
 
 Stores the total amount billed in the last cycle, updated by `billFee` calls. 
 
+- chapterMapper 
+
+Stores the address of the chapter mapper. 
+
 
 **Functions**
 - billFee 
@@ -90,11 +94,11 @@ Accepts hearer indexes param as "1, 2, 3..." for up to (100)  hearers, ignores h
 
 - hear 
 
-Bills the caller the `chapterFee`, creates a new hearer entry with their address, sets status to active. 
+Bills the caller the `chapterFee`, creates a new hearer entry with their address, sets status to active. Updates chapter mapper for `hearerChapters`, adding chapter address. 
 
 - silence 
 
-Sets a hearer's entry status to inactive, only callable by the hearerAddress for each entry. This effectively removes their subscription. 
+Sets a hearer's entry status to inactive, only callable by the hearerAddress for each entry. This effectively removes their subscription. Updates chapter mapper for `hearerChapters`, removing chapter address.    
 
 - luminate 
 
@@ -128,6 +132,9 @@ Determines the chapter token, callable by anyone, cannot be reset.
 
 Determines the cycleKey string, increments the chapter cycle count, electOnly. 
 
+- setChapterMapper
+
+Determines the chapterMapper address, callable by anyone, cannot be reset. 
 
 
 
@@ -143,8 +150,11 @@ State Variable, stores the chapter library address.
 
 - validChapters
 
-Mapping, stores the addresses of chapters that use LUX. 
+Mapping, stores the addresses of all chapters. 
 
+- addressOfchapterMapper 
+
+Stores the address of the chapter mapper. 
 
 **Functions***
 
@@ -158,7 +168,37 @@ Determines the library address where the chapter contract template is deployed. 
 
 - deployChapter 
 
-Creates a new chapter using the chapter contract template, passing "salt" for deterministic address generation. Sets elect - feeInterval - chapterFee and chapterToken based on caller input. Stores the chapter address if the chapter's token is LUX, if LUX is not set then skips this step. Extract all steps into helper functions. 
+Creates a new chapter using the chapter contract template, passing "salt" for deterministic address generation. Sets elect - feeInterval - chapterFee - chapterMapper and chapterToken based on caller input. Stores the chapter address in `validChapters`. Extract all steps into helper functions. 
+
+- setAddressOfChapterMapper 
+
+Sets the address for addressOfChapterMapper, callable by anyone, cannot be reset. 
+
+## **Chapter Mapper** 
+**Data** 
+- HearerChapters 
+
+Mapping, stores hearer address and subscribed chapters. 
+
+- factoryAddress 
+
+Stores the factory address 
+
+
+
+**Functions** 
+- addChapter 
+
+HearerOnly, adds a chapter address to a hearer's hearerChapters. Checks chapter validity on factory. 
+
+- removeChapter
+
+Same as "addChapter", but removes a chapter address. 
+
+- setFactoryAddress 
+
+Determines the factory address. 
+
 
 
 ## **Luminary Token** 
