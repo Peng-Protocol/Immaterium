@@ -4,20 +4,21 @@ pragma solidity ^0.8.1;
 
 /*
  * immateriumFactory.sol
- * version 0.0.1 :
+ * version 0.0.2:
  * - Initial implementation with LUX token, chapterLibrary, and validChapters mapping.
  * - deployChapter uses external chapterLibrary call with helper functions.
  * - Ownable imported, deployer set as initial owner.
  * - Event emitted on chapter deployment.
+ * - Updated _storeChapter to store all deployed chapters in validChapters without LUX check.
+ * - Added addressOfChapterMapper state variable, setAddressOfChapterMapper function, and updated deployChapter to set chapterMapper.
  */
-
-
 
 import "./imports/Ownable.sol";
 
 contract immateriumFactory is Ownable {
     address public LUX;
     address public chapterLibrary;
+    address public addressOfChapterMapper;
     mapping(address => bool) public validChapters;
 
     event ChapterDeployed(address indexed chapter, bytes32 salt);
@@ -60,11 +61,9 @@ contract immateriumFactory is Ownable {
         require(success, "setChapterToken failed");
     }
 
-    // Helper: Validate and store chapter
-    function _storeChapter(address chapter, address chapterToken) private {
-        if (LUX != address(0) && chapterToken == LUX) {
-            validChapters[chapter] = true;
-        }
+    // Helper: Store chapter
+    function _storeChapter(address chapter) private {
+        validChapters[chapter] = true;
     }
 
     function setLux(address lux) external onlyOwner {
@@ -73,6 +72,10 @@ contract immateriumFactory is Ownable {
 
     function setChapterLibrary(address library_) external onlyOwner {
         chapterLibrary = library_;
+    }
+
+    function setAddressOfChapterMapper(address mapper) external onlyOwner {
+        addressOfChapterMapper = mapper;
     }
 
     function deployChapter(
@@ -86,7 +89,14 @@ contract immateriumFactory is Ownable {
 
         address chapter = _deployChapterViaLibrary(salt);
         _configureChapter(chapter, elect, feeInterval, chapterFee, chapterToken);
-        _storeChapter(chapter, chapterToken);
+        _storeChapter(chapter);
+
+        if (addressOfChapterMapper != address(0)) {
+            (bool success, ) = chapter.call(
+                abi.encodeWithSignature("setChapterMapper(address)", addressOfChapterMapper)
+            );
+            require(success, "setChapterMapper failed");
+        }
 
         emit ChapterDeployed(chapter, salt);
     }
