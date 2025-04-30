@@ -215,23 +215,32 @@ Stores the latest swap threshold. Max threshold is 2500.
 
 - rewardEligibility 
 
-Mapping, stores the claimant address and timestamp since last claimReward call. 
+Mapping, stores the claimant address and timestamp since last claimReward call. Is set initially by claimInitial, reset by transfers and transferFroms. 
 
+- initialClaimants 
+
+Mapping, stores the addresses that have claimed via `claimInitial`.
+
+- supply 
+
+Initial supply is 10. 
 
 **Functions** 
 - mintRewards
 
-Mint 25% of current supply to self. Resets swapCount to "0". Increases swapThreshold by a factor of "1", unless max threshold is reached. Can only be called if swapCount is > swapThreshold. Extract steps into helpers. Nonreentrant. 
+Mint 25% of current supply to self. Resets swapCount to "0". Increases swapThreshold by a factor of "1", unless max threshold is reached. Can only be called if swapCount is > swapThreshold. Extract steps into helpers. Nonreentrant. Max supply is 25000, ensure mints reach max exactly amd do not exceed it. 
 
 - claimReward
 
-Allows any holder to claim LUX from the contract balance, reward is an amount equal to 25% of the caller's LUX balance. Only callable if rewardEligibility has a timestamp older than one month. Sets timestamp to current time. All transfers/transferFrom to a new address add the receiver address to rewardEligibility with the current timestamp. 
+Allows any holder to claim LUX from the contract balance, reward is an amount equal to 25% of the caller's LUX balance. Only callable if rewardEligibility has a timestamp older than one month. Sets timestamp to current time. All transfers/transferFrom to a new address add the receiver address to rewardEligibility with the current timestamp. Nonreentrant. 
 
 - fees 
 
-Each transfer or transferFrom takes a 1% fee which is held in the contract. 
+Each transfer or transferFrom takes a 0.05% fee which is held in the contract. 
 
+- claimInitial 
 
+Allows up to (20) an addresses to claim (1) LUX, addresses cannot claim more than once, claimants are added to `initialClaimants`. Nonreentrant. 
 
 
 # **Frontend**
