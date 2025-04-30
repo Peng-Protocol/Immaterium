@@ -275,6 +275,8 @@ Before billing fees, set cycle key, use cycle key for every lumination.
 
 // add swap interface for omf when possible
 
+// query strings in url
+
 // Show bonus amount before claim fee button. 
 
 Note : Possible exploit, someone can frontrun the billFee transaction and get their ownKey from the transaction.
