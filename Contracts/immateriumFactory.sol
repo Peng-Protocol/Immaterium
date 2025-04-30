@@ -4,7 +4,7 @@ pragma solidity ^0.8.1;
 
 /*
  * immateriumFactory.sol
- * version 0.0.3:
+ * version 0.0.4:
  * - Initial implementation with LUX token, chapterLibrary, and validChapters mapping.
  * - deployChapter uses external chapterLibrary call with helper functions.
  * - Ownable imported, deployer set as initial owner.
@@ -13,26 +13,36 @@ pragma solidity ^0.8.1;
  * - Added addressOfChapterMapper state variable, setAddressOfChapterMapper function, and updated deployChapter to set chapterMapper.
  * - Removed salt parameter from deployChapter; salt now generated internally using keccak256 with timestamp, sender, and nonce.
  * - Added nonce state variable for unique salt generation.
+ * - Changed chapterLibrary to ChapterLogic (regular contract) for deploying immateriumChapter (April 30, 2025).
+ * - Renamed chapterLibrary to chapterLogic and setChapterLibrary to setChapterLogic.
+ * - Added IChapterLogic interface for type-safe calls to ChapterLogic.
  */
 
 import "./imports/Ownable.sol";
+import "./immateriumChapter.sol";
+
+interface IChapterLogic {
+    function deploy(bytes32 salt) external returns (address);
+}
 
 contract immateriumFactory is Ownable {
     address public LUX;
-    address public chapterLibrary;
+    address public chapterLogic;
     address public addressOfChapterMapper;
     mapping(address => bool) public validChapters;
     uint256 private nonce; // Tracks deployments for unique salt generation
 
     event ChapterDeployed(address indexed chapter, bytes32 salt);
 
-    // Helper: Deploy chapter via chapterLibrary
-    function _deployChapterViaLibrary(bytes32 salt) private returns (address) {
-        (bool success, bytes memory data) = chapterLibrary.call(
+    // Helper: Deploy chapter via ChapterLogic
+    function _deployChapterViaLogic(bytes32 salt) private returns (address) {
+        (bool success, bytes memory data) = chapterLogic.call(
             abi.encodeWithSignature("deploy(bytes32)", salt)
         );
         require(success, "Chapter deployment failed");
-        return abi.decode(data, (address));
+        address chapter = abi.decode(data, (address));
+        require(chapter != address(0), "Invalid chapter address");
+        return chapter;
     }
 
     // Helper: Configure chapter settings
@@ -73,8 +83,8 @@ contract immateriumFactory is Ownable {
         LUX = lux;
     }
 
-    function setChapterLibrary(address library_) external onlyOwner {
-        chapterLibrary = library_;
+    function setChapterLogic(address logic) external onlyOwner {
+        chapterLogic = logic;
     }
 
     function setAddressOfChapterMapper(address mapper) external onlyOwner {
@@ -87,13 +97,13 @@ contract immateriumFactory is Ownable {
         uint256 chapterFee,
         address chapterToken
     ) external {
-        require(chapterLibrary != address(0), "Library not set");
+        require(chapterLogic != address(0), "Logic not set");
 
         // Generate salt using timestamp, sender, and nonce
         bytes32 salt = keccak256(abi.encodePacked(block.timestamp, msg.sender, nonce));
         nonce = nonce + 1; // Increment nonce for next deployment
 
-        address chapter = _deployChapterViaLibrary(salt);
+        address chapter = _deployChapterViaLogic(salt);
         _configureChapter(chapter, elect, feeInterval, chapterFee, chapterToken);
         _storeChapter(chapter);
 
