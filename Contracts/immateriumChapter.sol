@@ -4,7 +4,12 @@ pragma solidity ^0.8.1;
 
 /*
  * immateriumChapter.sol
- * version 0.0.3:
+ * version 0.0.4:
+ * - Added chapterName and chapterImage mappings to store string data.
+ * - Added addChapterImage and addChapterName functions with electOnly modifier.
+ * - Updated IimmateriumChapter interface to include addChapterImage and addChapterName.
+ * - Ensured functions are reusable for resetting values.
+ * - Maintained explicit casting and compatibility with Solidity ^0.8.1.
  * - Fixed TypeError: Index range access not supported for bytes memory in _parseOwnKeys (lines 124, 130).
  * - Added _substring helper function to extract bytes and cast to string.
  * - Fixed TypeError: Explicit type conversion from bytes slice to string in _parseOwnKeys (lines 124, 130).
@@ -35,6 +40,8 @@ interface IimmateriumChapter {
     function setChapterToken(address token) external;
     function setCycleKey(string calldata key) external;
     function setChapterMapper(address mapper) external;
+    function addChapterImage(string calldata image) external;
+    function addChapterName(string calldata name) external;
     function searchHearers() external view returns (address[] memory, uint256[] memory);
     function isHearer(address hearer) external view returns (address, string memory, uint256, bool);
     function getLumen(uint256 index) external view returns (string memory, uint256, uint256);
@@ -69,6 +76,8 @@ contract immateriumChapter is IimmateriumChapter {
     Lumen[] public lumens;
     string[] public cycleKey;
     mapping(string => Hearer) public oldKeys;
+    mapping(uint256 => string) public chapterName;
+    mapping(uint256 => string) public chapterImage;
 
     bool private electSet;
     bool private feeIntervalSet;
@@ -272,6 +281,14 @@ contract immateriumChapter is IimmateriumChapter {
     function setCycleKey(string calldata key) external override electOnly {
         cycleKey.push(key);
         chapterCycle++;
+    }
+
+    function addChapterImage(string calldata image) external override electOnly {
+        chapterImage[chapterCycle] = image;
+    }
+
+    function addChapterName(string calldata name) external override electOnly {
+        chapterName[chapterCycle] = name;
     }
 
     function searchHearers() external view override returns (address[] memory, uint256[] memory) {
