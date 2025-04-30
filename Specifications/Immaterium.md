@@ -144,9 +144,9 @@ Determines the chapterMapper address, callable by anyone, cannot be reset.
 
 State variable, stores the LUX token address. 
 
-- chapterLibrary
+- chapterlogic
 
-State Variable, stores the chapter library address. 
+State Variable, stores the chapter logic address. 
 
 - validChapters
 
@@ -162,9 +162,9 @@ Stores the address of the chapter mapper.
 
 Determines the LUX token, ownerOnly. 
 
-- setChapterLibrary 
+- setChapterlogic 
 
-Determines the library address where the chapter contract template is deployed. OwnerOnly. 
+Determines the logic address where the chapter contract template is deployed. OwnerOnly. 
 
 - deployChapter 
 
