@@ -4,18 +4,19 @@ pragma solidity ^0.8.1;
 
 /*
  * immateriumChapter.sol
- * version 0.0.4:
- * - Added chapterName and chapterImage mappings to store string data.
- * - Added addChapterImage and addChapterName functions with electOnly modifier.
- * - Updated IimmateriumChapter interface to include addChapterImage and addChapterName.
- * - Ensured functions are reusable for resetting values.
- * - Maintained explicit casting and compatibility with Solidity ^0.8.1.
+ * version 0.0.6:
+ * - Added require(chapterMapper != address(0)) in addChapterName to ensure mapper is set.
+ * - Replaced chapterImage mapping with single string chapterImage for simpler querying.
+ * - Removed verifyInst state variable for cleanup.
+ * - Replaced chapterName mapping with single string chapterName for simpler querying.
+ * - Updated addChapterName to set chapterName and call chapterMapper.addName.
+ * - Added timestamp to Lumen struct and updated luminate to store timestamp via _getCurrentTimestamp.
+ * - Updated getLumen to return timestamp and adjusted IimmateriumChapter interface.
+ * - Added lumenHeight state variable to track total lumens, updated in luminate via _incrementLumenHeight.
  * - Fixed TypeError: Index range access not supported for bytes memory in _parseOwnKeys (lines 124, 130).
- * - Added _substring helper function to extract bytes and cast to string.
  * - Fixed TypeError: Explicit type conversion from bytes slice to string in _parseOwnKeys (lines 124, 130).
  * - Fixed TypeError: Wrong argument count for Hearer struct in _chargeHearer (line 164).
- * - Ensured explicit casting and no inline assembly.
- * - Maintained compatibility with Solidity ^0.8.1.
+ * - Ensured explicit casting, no inline assembly, and compatibility with Solidity ^0.8.1.
  */
 
 import "./imports/IERC20.sol";
@@ -25,6 +26,9 @@ interface IChapterMapper {
     function removeChapter(address hearer, address chapter) external;
     function getHearerChapters(address hearer) external view returns (address[] memory);
     function isHearerSubscribed(address hearer, address chapter) external view returns (bool);
+    function addName(string calldata name, address chapter) external;
+    function queryPartialName(string calldata query) external view returns (address[] memory, string[] memory);
+    function queryExactName(string calldata name) external view returns (address, string memory);
 }
 
 interface IimmateriumChapter {
@@ -44,7 +48,7 @@ interface IimmateriumChapter {
     function addChapterName(string calldata name) external;
     function searchHearers() external view returns (address[] memory, uint256[] memory);
     function isHearer(address hearer) external view returns (address, string memory, uint256, bool);
-    function getLumen(uint256 index) external view returns (string memory, uint256, uint256);
+    function getLumen(uint256 index) external view returns (string memory, uint256, uint256, uint256);
     function getActiveHearersCount() external view returns (uint256);
 }
 
@@ -60,6 +64,7 @@ contract immateriumChapter is IimmateriumChapter {
         string dataEntry;
         uint256 cycle;
         uint256 index;
+        uint256 timestamp;
     }
 
     address public elect;
@@ -69,15 +74,15 @@ contract immateriumChapter is IimmateriumChapter {
     uint256 public nextFee;
     address public chapterToken;
     address public chapterMapper;
-    string public verifyInst = "Find - Factory Address >> Read Functions >> Chapter Template - Verify";
     uint256 public lastCycleVolume;
+    string public chapterName;
+    string public chapterImage;
+    uint256 public lumenHeight;
 
     Hearer[] public hearers;
     Lumen[] public lumens;
     string[] public cycleKey;
     mapping(string => Hearer) public oldKeys;
-    mapping(uint256 => string) public chapterName;
-    mapping(uint256 => string) public chapterImage;
 
     bool private electSet;
     bool private feeIntervalSet;
@@ -178,6 +183,7 @@ contract immateriumChapter is IimmateriumChapter {
 
     // Helper: Shift hearer entries to close gaps
     function _shiftHearers(uint256 startIndex) private {
+
         for (uint256 i = startIndex; i < hearers.length - 1; i++) {
             hearers[i] = hearers[i + 1];
         }
@@ -194,6 +200,16 @@ contract immateriumChapter is IimmateriumChapter {
                 i++;
             }
         }
+    }
+
+    // Helper: Get current timestamp
+    function _getCurrentTimestamp() private view returns (uint256) {
+        return block.timestamp;
+    }
+
+    // Helper: Increment lumenHeight
+    function _incrementLumenHeight() private {
+        lumenHeight = lumenHeight + 1;
     }
 
     function billFee(string calldata indexes, string calldata ownKeys) external override electOnly {
@@ -236,7 +252,8 @@ contract immateriumChapter is IimmateriumChapter {
     }
 
     function luminate(string calldata dataEntry) external override electOnly {
-        lumens.push(Lumen(dataEntry, chapterCycle, lumens.length));
+        lumens.push(Lumen(dataEntry, chapterCycle, lumens.length, _getCurrentTimestamp()));
+        _incrementLumenHeight();
     }
 
     function reElect(address newElect) external override electOnly {
@@ -284,11 +301,13 @@ contract immateriumChapter is IimmateriumChapter {
     }
 
     function addChapterImage(string calldata image) external override electOnly {
-        chapterImage[chapterCycle] = image;
+        chapterImage = image;
     }
 
     function addChapterName(string calldata name) external override electOnly {
-        chapterName[chapterCycle] = name;
+        require(chapterMapper != address(0), "ChapterMapper not set");
+        chapterName = name;
+        IChapterMapper(chapterMapper).addName(name, address(this));
     }
 
     function searchHearers() external view override returns (address[] memory, uint256[] memory) {
@@ -336,10 +355,10 @@ contract immateriumChapter is IimmateriumChapter {
         revert("Not a hearer");
     }
 
-    function getLumen(uint256 index) external view override returns (string memory, uint256, uint256) {
+    function getLumen(uint256 index) external view override returns (string memory, uint256, uint256, uint256) {
         require(index < lumens.length, "Invalid index");
         Lumen memory lumen = lumens[index];
-        return (lumen.dataEntry, lumen.cycle, lumen.index);
+        return (lumen.dataEntry, lumen.cycle, lumen.index, lumen.timestamp);
     }
 
     function getActiveHearersCount() external view override returns (uint256) {

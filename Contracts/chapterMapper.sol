@@ -4,13 +4,20 @@ pragma solidity ^0.8.1;
 
 /*
  * chapterMapper.sol
- * version 0.0.1:
- * - Initial implementation of chapterMapper with hearerChapters mapping and helper function for updates.
- * - Added immateriumFactory state variable, setImmateriumFactory function, and restricted addChapter/removeChapter to hearer or valid chapters.
- * - Added getHearerChapters view function to return all chapters a hearer is subscribed to.
- * - Added isHearerSubscribed view function to check if a hearer is subscribed to a specific chapter.
- * - Optimized _updateHearerChapters to prevent duplicate chapter entries during add.
- * - Optimized isHearerSubscribed with a smaller iteration bound for gas efficiency.
+ * version 0.0.7:
+ * - Removed queryExactName and DebugQueryExactName; removed 1000 iteration limit in queryPartialName.
+ * - Fixed syntax error in _isSubstring; corrected incomplete for loop to 'for (uint256 j = 0; j < queryBytes.length; j++)'.
+ * - Removed elect check in addName to fix caller mismatch with addChapterName.
+ * - Fixed reserved keyword 'match' in _isSubstring; replaced with 'isMatch'.
+ * - Fixed invalid identifier 'duracion' in _isSubstring; replaced with 'bool isMatch = true'.
+ * - Added ChapterName struct and chapterNames array to store chapter names and addresses.
+ * - Added addName function with valid chapter verification.
+ * - Added queryPartialName for name-based queries.
+ * - Added _isSubstring helper for partial name matching without external libraries.
+ * - Added ChapterNameAdded event for addName.
+ * - Updated IChapterMapper interface with new functions.
+ * - Optimized _updateHearerChapters to prevent duplicate chapter entries.
+ * - Optimized isHearerSubscribed with a smaller iteration bound.
  */
 
 import "./imports/Ownable.sol";
@@ -19,17 +26,31 @@ interface IImmateriumFactory {
     function validChapters(address chapter) external view returns (bool);
 }
 
+interface IimmateriumChapter {
+    function elect() external view returns (address);
+}
+
 interface IChapterMapper {
     function addChapter(address hearer, address chapter) external;
     function removeChapter(address hearer, address chapter) external;
     function getHearerChapters(address hearer) external view returns (address[] memory);
     function isHearerSubscribed(address hearer, address chapter) external view returns (bool);
+    function addName(string calldata name, address chapter) external;
+    function queryPartialName(string calldata query) external view returns (address[] memory, string[] memory);
 }
 
 contract chapterMapper is Ownable, IChapterMapper {
+    struct ChapterName {
+        string name;
+        address chapter;
+    }
+
     mapping(address => address[]) public hearerChapters;
     address public immateriumFactory;
+    ChapterName[] public chapterNames;
     bool private factorySet;
+
+    event ChapterNameAdded(string name, address indexed chapter);
 
     // Helper: Update hearerChapters mapping
     function _updateHearerChapters(address hearer, address chapter, bool add) private {
@@ -37,15 +58,13 @@ contract chapterMapper is Ownable, IChapterMapper {
         require(chapters.length < 1000, "Too many chapters");
 
         if (add) {
-            // Check for duplicates
             for (uint256 i = 0; i < chapters.length; i++) {
                 if (chapters[i] == chapter) {
-                    return; // Chapter already exists
+                    return;
                 }
             }
             chapters.push(chapter);
         } else {
-            // Find and remove chapter
             for (uint256 i = 0; i < chapters.length; i++) {
                 if (chapters[i] == chapter) {
                     for (uint256 j = i; j < chapters.length - 1; j++) {
@@ -56,6 +75,29 @@ contract chapterMapper is Ownable, IChapterMapper {
                 }
             }
         }
+    }
+
+    // Helper: Check if query is a substring of target
+    function _isSubstring(string memory query, string memory target) private pure returns (bool) {
+        bytes memory queryBytes = bytes(query);
+        bytes memory targetBytes = bytes(target);
+        if (queryBytes.length == 0 || queryBytes.length > targetBytes.length) {
+            return false;
+        }
+
+        for (uint256 i = 0; i <= targetBytes.length - queryBytes.length; i++) {
+            bool isMatch = true;
+            for (uint256 j = 0; j < queryBytes.length; j++) {
+                if (targetBytes[i + j] != queryBytes[j]) {
+                    isMatch = false;
+                    break;
+                }
+            }
+            if (isMatch) {
+                return true;
+            }
+        }
+        return false;
     }
 
     function setImmateriumFactory(address factory) external onlyOwner {
@@ -94,5 +136,43 @@ contract chapterMapper is Ownable, IChapterMapper {
             }
         }
         return false;
+    }
+
+    function addName(string calldata name, address chapter) external override {
+        require(bytes(name).length > 0, "Empty name");
+        require(chapter != address(0), "Invalid chapter");
+        require(factorySet && IImmateriumFactory(immateriumFactory).validChapters(msg.sender), "Not a valid chapter");
+
+        for (uint256 i = 0; i < chapterNames.length; i++) {
+            require(
+                keccak256(abi.encodePacked(chapterNames[i].name)) != keccak256(abi.encodePacked(name)) &&
+                chapterNames[i].chapter != chapter,
+                "Name or chapter already exists"
+            );
+        }
+
+        chapterNames.push(ChapterName(name, chapter));
+        emit ChapterNameAdded(name, chapter);
+    }
+
+    function queryPartialName(string calldata query) external view override returns (address[] memory, string[] memory) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < chapterNames.length; i++) {
+            if (_isSubstring(query, chapterNames[i].name)) {
+                count++;
+            }
+        }
+
+        address[] memory chapters = new address[](count);
+        string[] memory names = new string[](count);
+        uint256 j = 0;
+        for (uint256 i = 0; i < chapterNames.length; i++) {
+            if (_isSubstring(query, chapterNames[i].name)) {
+                chapters[j] = chapterNames[i].chapter;
+                names[j] = chapterNames[i].name;
+                j++;
+            }
+        }
+        return (chapters, names);
     }
 }
