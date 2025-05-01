@@ -4,7 +4,8 @@ pragma solidity ^0.8.1;
 
 /*
  * chapterMapper.sol
- * version 0.0.7:
+ * version 0.0.8:
+ * - Added name length check (<=100) in addName for graceful failure.
  * - Removed queryExactName and DebugQueryExactName; removed 1000 iteration limit in queryPartialName.
  * - Fixed syntax error in _isSubstring; corrected incomplete for loop to 'for (uint256 j = 0; j < queryBytes.length; j++)'.
  * - Removed elect check in addName to fix caller mismatch with addChapterName.
@@ -140,6 +141,7 @@ contract chapterMapper is Ownable, IChapterMapper {
 
     function addName(string calldata name, address chapter) external override {
         require(bytes(name).length > 0, "Empty name");
+        require(bytes(name).length <= 100, "Name too long");
         require(chapter != address(0), "Invalid chapter");
         require(factorySet && IImmateriumFactory(immateriumFactory).validChapters(msg.sender), "Not a valid chapter");
 

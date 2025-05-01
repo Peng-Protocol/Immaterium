@@ -4,7 +4,10 @@ pragma solidity ^0.8.1;
 
 /*
  * immateriumChapter.sol
- * version 0.0.8:
+ * version 0.0.9:
+ * - Fixed typo in addChapterName by removing erroneous 'flurry' text.
+ * - Reinstated chapterMapperSet check in setChapterMapper to ensure one-time setting by factory at deployment.
+ * - Updated billFee to accept cell parameter for batch processing to prevent out-of-gas errors.
  * - Added nextFee check to nextCycleKey to restrict execution to when fees are due or contract is newly deployed.
  * - Renamed setCycleKey to nextCycleKey and updated signature to handle cellIndex and ownKeys.
  * - Moved ownKeys parsing and ownCycle updates from billFee to nextCycleKey.
@@ -31,7 +34,7 @@ interface IChapterMapper {
 }
 
 interface IimmateriumChapter {
-    function billFee() external;
+    function billFee(uint256 cell) external;
     function hear() external;
     function silence() external;
     function luminate(string calldata dataEntry) external;
@@ -216,12 +219,14 @@ contract immateriumChapter is IimmateriumChapter {
         lumenHeight = lumenHeight + 1;
     }
 
-    function billFee() external override electOnly {
+    function billFee(uint256 cell) external override electOnly {
         if (nextFee != 0 && nextFee > block.timestamp) {
             emit BillingFailed(address(0), "Fees not due");
         } else {
             lastCycleVolume = 0;
-            for (uint256 i = 0; i < hearers.length; i++) {
+            uint256 start = cell * 100;
+            uint256 end = start + 100 > hearers.length ? hearers.length : start + 100;
+            for (uint256 i = start; i < end; i++) {
                 if (hearers[i].status) {
                     _chargeHearer(i);
                 }
