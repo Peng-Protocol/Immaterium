@@ -4,18 +4,17 @@ pragma solidity ^0.8.1;
 
 /*
  * immateriumChapter.sol
- * version 0.0.6:
- * - Added require(chapterMapper != address(0)) in addChapterName to ensure mapper is set.
- * - Replaced chapterImage mapping with single string chapterImage for simpler querying.
- * - Removed verifyInst state variable for cleanup.
- * - Replaced chapterName mapping with single string chapterName for simpler querying.
- * - Updated addChapterName to set chapterName and call chapterMapper.addName.
- * - Added timestamp to Lumen struct and updated luminate to store timestamp via _getCurrentTimestamp.
- * - Updated getLumen to return timestamp and adjusted IimmateriumChapter interface.
- * - Added lumenHeight state variable to track total lumens, updated in luminate via _incrementLumenHeight.
- * - Fixed TypeError: Index range access not supported for bytes memory in _parseOwnKeys (lines 124, 130).
- * - Fixed TypeError: Explicit type conversion from bytes slice to string in _parseOwnKeys (lines 124, 130).
- * - Fixed TypeError: Wrong argument count for Hearer struct in _chargeHearer (line 164).
+ * version 0.0.8:
+ * - Added nextFee check to nextCycleKey to restrict execution to when fees are due or contract is newly deployed.
+ * - Renamed setCycleKey to nextCycleKey and updated signature to handle cellIndex and ownKeys.
+ * - Moved ownKeys parsing and ownCycle updates from billFee to nextCycleKey.
+ * - Updated billFee to take no parameters, allow billing when nextFee == 0, and remove ownCycle updates.
+ * - Introduced cell concept: hearers grouped into cells of 100 for gas-efficient ownKeys updates.
+ * - Added getCellHeight to return total number of cells.
+ * - Added getCellHearerCount to return number of hearers in a specific cell.
+ * - Added nextFeeInSeconds to return remaining time until nextFee in seconds, minutes, and hours.
+ * - Ensured graceful degradation with BillingFailed and KeyUpdateFailed events for failed conditions.
+ * - Updated IimmateriumChapter interface to reflect new function signatures.
  * - Ensured explicit casting, no inline assembly, and compatibility with Solidity ^0.8.1.
  */
 
@@ -32,17 +31,17 @@ interface IChapterMapper {
 }
 
 interface IimmateriumChapter {
-    function billFee(string calldata indexes, string calldata ownKeys) external;
+    function billFee() external;
     function hear() external;
     function silence() external;
     function luminate(string calldata dataEntry) external;
     function reElect(address newElect) external;
-    function changeFee(string calldata indexes, string calldata ownKeys, uint256 newFee) external;
+    function changeFee(uint256 newFee) external;
     function setElect(address elect) external;
     function setFeeInterval(uint256 interval) external;
     function setChapterFee(uint256 fee) external;
     function setChapterToken(address token) external;
-    function setCycleKey(string calldata key) external;
+    function nextCycleKey(string calldata key, uint256 cellIndex, string calldata ownKeys) external;
     function setChapterMapper(address mapper) external;
     function addChapterImage(string calldata image) external;
     function addChapterName(string calldata name) external;
@@ -50,6 +49,9 @@ interface IimmateriumChapter {
     function isHearer(address hearer) external view returns (address, string memory, uint256, bool);
     function getLumen(uint256 index) external view returns (string memory, uint256, uint256, uint256);
     function getActiveHearersCount() external view returns (uint256);
+    function nextFeeInSeconds() external view returns (uint256, uint256, uint256);
+    function getCellHeight() external view returns (uint256);
+    function getCellHearerCount(uint256 cellIndex) external view returns (uint256);
 }
 
 contract immateriumChapter is IimmateriumChapter {
@@ -89,6 +91,10 @@ contract immateriumChapter is IimmateriumChapter {
     bool private chapterFeeSet;
     bool private chapterTokenSet;
     bool private chapterMapperSet;
+
+    event BillingFailed(address hearer, string reason);
+    event KeyUpdated(address hearer, string newKey);
+    event KeyUpdateFailed(address hearer, string reason);
 
     modifier electOnly() {
         require(msg.sender == elect, "electOnly");
@@ -160,22 +166,21 @@ contract immateriumChapter is IimmateriumChapter {
         return trimmed;
     }
 
-    // Helper: Charge fee and update hearer
-    function _chargeHearer(uint256 index, string memory ownKey) private returns (bool) {
+    // Helper: Charge fee
+    function _chargeHearer(uint256 index) private returns (bool) {
         Hearer storage hearer = hearers[index];
         if (
             hearer.status &&
-            hearer.ownCycle < chapterCycle &&
             IERC20(chapterToken).allowance(hearer.hearerAddress, address(this)) >= chapterFee &&
             IERC20(chapterToken).balanceOf(hearer.hearerAddress) >= chapterFee
         ) {
-            bool success = IERC20(chapterToken).transferFrom(hearer.hearerAddress, elect, chapterFee);
-            if (success) {
-                lastCycleVolume += chapterFee;
-                oldKeys[hearer.ownKey] = Hearer(hearer.hearerAddress, hearer.ownKey, hearer.ownCycle, false);
-                hearer.ownKey = ownKey;
-                hearer.ownCycle = chapterCycle;
-                return true;
+            try IERC20(chapterToken).transferFrom(hearer.hearerAddress, elect, chapterFee) returns (bool success) {
+                if (success) {
+                    lastCycleVolume += chapterFee;
+                    return true;
+                }
+            } catch {
+                emit BillingFailed(hearer.hearerAddress, "Transfer failed");
             }
         }
         return false;
@@ -183,7 +188,6 @@ contract immateriumChapter is IimmateriumChapter {
 
     // Helper: Shift hearer entries to close gaps
     function _shiftHearers(uint256 startIndex) private {
-
         for (uint256 i = startIndex; i < hearers.length - 1; i++) {
             hearers[i] = hearers[i + 1];
         }
@@ -212,22 +216,19 @@ contract immateriumChapter is IimmateriumChapter {
         lumenHeight = lumenHeight + 1;
     }
 
-    function billFee(string calldata indexes, string calldata ownKeys) external override electOnly {
-        require(nextFee == 0, "Fees not due");
-        uint256[] memory parsedIndexes = _parseIndexes(indexes);
-        string[] memory parsedKeys = _parseOwnKeys(ownKeys);
-        require(parsedIndexes.length == parsedKeys.length, "Mismatched inputs");
-
-        lastCycleVolume = 0;
-        for (uint256 i = 0; i < parsedIndexes.length && i < 100; i++) {
-            uint256 index = parsedIndexes[i];
-            if (index < hearers.length) {
-                _chargeHearer(index, parsedKeys[i]);
+    function billFee() external override electOnly {
+        if (nextFee != 0 && nextFee > block.timestamp) {
+            emit BillingFailed(address(0), "Fees not due");
+        } else {
+            lastCycleVolume = 0;
+            for (uint256 i = 0; i < hearers.length; i++) {
+                if (hearers[i].status) {
+                    _chargeHearer(i);
+                }
             }
+            _cleanInactiveHearers();
+            nextFee = block.timestamp + feeInterval;
         }
-
-        _cleanInactiveHearers();
-        nextFee = block.timestamp + feeInterval;
     }
 
     function hear() external override {
@@ -260,8 +261,8 @@ contract immateriumChapter is IimmateriumChapter {
         elect = newElect;
     }
 
-    function changeFee(string calldata indexes, string calldata ownKeys, uint256 newFee) external override electOnly {
-        require(nextFee == 0, "Fees not due");
+    function changeFee(uint256 newFee) external override electOnly {
+        require(nextFee == 0 || nextFee <= block.timestamp, "Fees not due");
         chapterFee = newFee;
     }
 
@@ -295,9 +296,47 @@ contract immateriumChapter is IimmateriumChapter {
         chapterMapperSet = true;
     }
 
-    function setCycleKey(string calldata key) external override electOnly {
+    function nextCycleKey(string calldata key, uint256 cellIndex, string calldata ownKeys) external override electOnly {
+        if (nextFee != 0 && nextFee > block.timestamp) {
+            emit KeyUpdateFailed(address(0), "Fees not due");
+            return;
+        }
+
+        uint256 cellHeight = (hearers.length + 99) / 100;
+        if (cellIndex >= cellHeight) {
+            emit KeyUpdateFailed(address(0), "Invalid cell index");
+            return;
+        }
+
         cycleKey.push(key);
         chapterCycle++;
+
+        uint256 startIndex = cellIndex * 100;
+        uint256 endIndex = startIndex + 100 > hearers.length ? hearers.length : startIndex + 100;
+        string[] memory parsedKeys = _parseOwnKeys(ownKeys);
+        uint256 activeCount = 0;
+
+        for (uint256 i = startIndex; i < endIndex; i++) {
+            if (hearers[i].status) {
+                activeCount++;
+            }
+        }
+
+        if (parsedKeys.length != activeCount) {
+            emit KeyUpdateFailed(address(0), "Mismatched ownKeys count");
+        } else {
+            uint256 keyIndex = 0;
+            for (uint256 i = startIndex; i < endIndex && keyIndex < parsedKeys.length; i++) {
+                if (hearers[i].status) {
+                    Hearer storage hearer = hearers[i];
+                    oldKeys[hearer.ownKey] = Hearer(hearer.hearerAddress, hearer.ownKey, hearer.ownCycle, false);
+                    hearer.ownKey = parsedKeys[keyIndex];
+                    hearer.ownCycle = chapterCycle;
+                    emit KeyUpdated(hearer.hearerAddress, hearer.ownKey);
+                    keyIndex++;
+                }
+            }
+        }
     }
 
     function addChapterImage(string calldata image) external override electOnly {
@@ -369,5 +408,29 @@ contract immateriumChapter is IimmateriumChapter {
             }
         }
         return count;
+    }
+
+    function nextFeeInSeconds() external view override returns (uint256, uint256, uint256) {
+        if (nextFee <= block.timestamp || nextFee == 0) {
+            return (0, 0, 0);
+        }
+        uint256 secondsLeft = nextFee - block.timestamp;
+        uint256 minutesLeft = secondsLeft / 60;
+        uint256 hoursLeft = secondsLeft / 3600;
+        return (secondsLeft, minutesLeft, hoursLeft);
+    }
+
+    function getCellHeight() external view override returns (uint256) {
+        return (hearers.length + 99) / 100;
+    }
+
+    function getCellHearerCount(uint256 cellIndex) external view override returns (uint256) {
+        uint256 cellHeight = (hearers.length + 99) / 100;
+        if (cellIndex >= cellHeight) {
+            return 0;
+        }
+        uint256 startIndex = cellIndex * 100;
+        uint256 endIndex = startIndex + 100 > hearers.length ? hearers.length : startIndex + 100;
+        return endIndex - startIndex;
     }
 }
