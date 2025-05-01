@@ -57,21 +57,21 @@ State variable, determines the amount to charge hearers at the fee interval.
 
 - nextFee 
 
-A counter that returns in seconds when fees can be billed next. 
+A timestamp of when fees can be billed again. 
 
 - chapterToken 
 
 Stores the token billed as fees. 
 
-- verifyInst
-
-A simple text entry that reads: 
-
-"Find - Factory Address >> Read Functions >> Chapter Template - Verify"
 
 - searchHearers 
 
 Iterates over up to (1000) hearer entries and returns hearers who are eligible and due to pay fees, these are hearers whose ownCycle is below current chapterCycle and have approved enough of the chapter token and have a sufficient balance. 
+
+- cellHeight 
+
+Stores the total number of hearer cells. 
+
 
 - isHearer
 
@@ -85,11 +85,21 @@ Stores the total amount billed in the last cycle, updated by `billFee` calls.
 
 Stores the address of the chapter mapper. 
 
+- chapterImage 
+
+Stores the chapter image string.
+
+- chapterName 
+
+Stores the chapter name string. 
+
 
 **Functions**
+
+
 - billFee 
 
-Accepts hearer indexes param as "1, 2, 3..." for up to (100)  hearers, ignores hearers whose `ownCycle` is equal to current chapter cycle, iterates over up to (100) hearer addresses, attempts to charge hearers the `chapterFee` amount, skips if not approved or insufficient balance. Updates billed hearers' `ownCycle` to the latest `chapterCycle`. Accepts "ownKey" params for every hearer involved, formatted as "1234, 1234...", for the total number of hearers in the order which their indexes were passed. Hearers that weren't updated do not get their "ownKey". Avoids hearers whose status is inactive, clears inactive hearer entries and closes index gaps. Updates `oldKeys` for all affected hearers. Updates `lastCycleVolume`. All steps extracted into helper functions.  electOnly.  Can only be called if `nextFee` is zero, sets new `nextFee` time based on `feeInterval`. 
+Requires hearer cell index, attempts to bill all active hearers in the cell, avoids hearers whose status is inactive, clears inactive hearer entries and closes index gaps.  Updates `lastCycleVolume` based on total billed. All steps extracted into helper functions.  electOnly.  Can only be called if `nextFee` is due or zero, sets new `nextFee` time based on `feeInterval`. If a hearer cannot be billed due to insufficient balance or approval then this skips the hearer. 
 
 
 - hear 
@@ -103,6 +113,18 @@ Sets a hearer's entry status to inactive, only callable by the hearerAddress for
 - luminate 
 
 Elect only, creates a new lumen entry with incremental index number and the current chapter cycle, accepts `dataEntry` param. 
+
+- nextFeeInSeconds 
+
+Gets `nextFee` and current block timestamp, calculates time till next fee, returns in seconds - minutes and hours. 
+
+- getCellHearerCount 
+
+All hearers are sorted in 100 index cells for batch operations. This function returns the number of hearers in a cell. 
+
+- getActiveHearersCount  
+
+Returns the total number of active hearers. 
 
 - reElect 
 
@@ -128,13 +150,21 @@ Determines the chapter fee, callable by anyone, cannot be reset.
 
 Determines the chapter token, callable by anyone, cannot be reset. 
 
-- setCycleKey 
+- nextCycleKey 
 
-Determines the cycleKey string, increments the chapter cycle count, electOnly. 
+Determines the cycleKey string, sets ownKey for active hearers whose ownCycle is below current chapter cycle, accepts params for ownKeys as "(string), (string)", targets hearers by "cell", requires cell index, avoids setting ownKey to inactive hearers, increments the chapter cycle count, electOnly. 
 
 - setChapterMapper
 
 Determines the chapterMapper address, callable by anyone, cannot be reset. 
+
+setChapterName 
+
+ElectOnly, determines the chapter name string. Calls `addName` at the chapterMapper with the chapter's name. 
+
+setChapterImage 
+
+ElectOnly, determines the chapter image string. 
 
 
 
@@ -184,6 +214,10 @@ Mapping, stores hearer address and subscribed chapters.
 
 Stores the factory address 
 
+- chapterNames 
+
+Struct, stores chapter names with their address via an array.   
+
 
 
 **Functions** 
@@ -194,6 +228,18 @@ HearerOnly, adds a chapter address to a hearer's hearerChapters. Checks chapter 
 - removeChapter
 
 Same as "addChapter", but removes a chapter address. 
+
+- addName 
+
+Adds a passed name and address to the `chapterNames` array. Verifies that the call originates from a valid chapter. Same name or address cannot be added twice. 
+
+- queryPartialName 
+
+Iterates through chapter names and returns all results that are either partial or whole matches. Caps at (1000) results. 
+
+- queryExactName 
+
+Iterates through chapter names and returns an exact name + address, if any. Does not cap iterations. 
 
 - setFactoryAddress 
 
@@ -243,8 +289,10 @@ Each transfer or transferFrom takes a 0.05% fee which is held in the contract.
 Allows up to (20) an addresses to claim (1) LUX, addresses cannot claim more than once, claimants are added to `initialClaimants`. Nonreentrant. 
 
 
+
 # **Frontend**
 
+// Implement basic features, exclude OMF and LUX, exclude chainMail, comment to-do
 
 Frontend: Gets links from lumen string, determines what kind of data it is, avoids malicious Javascript execution. Support images - PDFs and markdown at first, then later music - videos etc.
 
@@ -271,6 +319,8 @@ Feeinterval is in seconds, calculate options for intervals in days, weeks, month
 
 Before billing fees, set cycle key, use cycle key for every lumination.  
 
+//  frontend distinguishes private vs public chapters by "0" as ownKey and cycleKey. Have private/public indicator 
+
 // create a way to detect if someone is slugging a d subtract their... Nvm, Own Cycle must be lower than chapter cycle. 
 
 // add swap interface for omf when possible
@@ -279,4 +329,8 @@ Before billing fees, set cycle key, use cycle key for every lumination.
 
 // Show bonus amount before claim fee button. 
 
-Note : Possible exploit, someone can frontrun the billFee transaction and get their ownKey from the transaction.
+// can't set cycle key until after first hearer and billing, all posts public till then
+
+// warning about chapter name length, will not be mapped. 
+
+Note : Possible exploit, someone can frontrun the billFee transaction and get their ownKey from the transaction.  
