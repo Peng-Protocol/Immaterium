@@ -11,12 +11,6 @@ import "./imports/IERC20.sol";
 // - Verified 18 decimals and contract balance before transfer.
 // - Used mapping and array to track claimants and prevent repeat claims.
 
-interface IERC20 {
-    function transfer(address recipient, uint256 amount) external returns (bool);
-    function balanceOf(address account) external view returns (uint256);
-    function decimals() external view returns (uint256);
-}
-
 contract LightSource {
     // Tracks if an address has claimed
     mapping(address => bool) public hasClaimed;
