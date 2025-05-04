@@ -261,7 +261,7 @@ Stores the latest swap threshold. Max threshold is 2500.
 
 - rewardEligibility 
 
-Mapping, stores the claimant address and timestamp since last claimReward call. Is set initially by claimInitial, reset by transfers and transferFroms. 
+Mapping, stores the claimant address and timestamp since last claimReward call. Is set initially for recipients by transfers and transferFroms.  
 
 - supply 
 
