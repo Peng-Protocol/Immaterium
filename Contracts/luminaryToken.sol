@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: BSD-3-Clause
 pragma solidity ^0.8.1;
 
-// Version: 0.0.2
-// - Added mintedRewards counter to track reward mints.
-// - Enforced MAX_SUPPLY of 25,000 tokens; mint difference if exceeding.
-// - Reduced fee to 0.05% (5/10000).
-// - Set initial supply to 10 tokens.
-// - Added claimInitial to mint 1 token per address, max 20 claims, with initialClaimant tracking.
-// - Added decimals() override to return 18.
-// - Added nonReentrant to claimReward and claimInitial.
-// - Added Minted event for supply changes.
-// - Ensured claimInitial sets rewardEligibility for first-time recipients.
+// Version: 0.0.4
+// - Removed MAX_SUPPLY and associated logic to allow unconstrained reward mints.
+// - Removed claimInitial function, initialClaimant mapping, initialClaimCount, INITIAL_CLAIM_AMOUNT, and MAX_INITIAL_CLAIMS to eliminate initial claim mechanics.
+// - Updated _mintToContract to mint 25% of current supply without supply cap.
+// - Removed initial claim eligibility logic from claimInitial.
+// - Set swapThreshold to a fixed value of 500.
+// - Removed _updateSwapThreshold function and its call in mintRewards to prevent incrementing swapThreshold.
+// - Maintained all other functionality, ensuring graceful degradation.
 
 import "./imports/ERC20.sol";
 import "./imports/SafeMath.sol";
@@ -20,7 +18,6 @@ import "./imports/ReentrancyGuard.sol";
 interface ILuminaryToken {
     function mintRewards() external;
     function claimReward() external;
-    function claimInitial() external;
     function transfer(address recipient, uint256 amount) external returns (bool);
     function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
     function decimals() external pure returns (uint8);
@@ -33,20 +30,12 @@ contract LuminaryToken is ERC20, ReentrancyGuard {
     string private constant _name = "Luminary Token";
     string private constant _symbol = "LUX";
     uint256 private constant INITIAL_SUPPLY = 10 * 10**18; // 10 tokens, 18 decimals
-    uint256 private constant MAX_SUPPLY = 25_000 * 10**18; // 25,000 tokens, 18 decimals
 
     // Reward mechanics
     uint256 public swapCount;
-    uint256 public swapThreshold;
-    uint256 private constant MAX_THRESHOLD = 2500;
+    uint256 public constant swapThreshold = 500;
     mapping(address => uint256) public rewardEligibility;
     uint256 public mintedRewards;
-
-    // Initial claim mechanics
-    mapping(address => bool) public initialClaimant;
-    uint256 public initialClaimCount;
-    uint256 private constant INITIAL_CLAIM_AMOUNT = 1 * 10**18; // 1 token, 18 decimals
-    uint256 private constant MAX_INITIAL_CLAIMS = 20;
 
     // Constants
     uint256 private constant FEE_PERCENT = 5; // 0.05%
@@ -62,7 +51,6 @@ contract LuminaryToken is ERC20, ReentrancyGuard {
     constructor() ERC20(_name, _symbol) {
         _mint(msg.sender, INITIAL_SUPPLY);
         emit Minted(msg.sender, INITIAL_SUPPLY);
-        swapThreshold = 0; // Initial threshold
     }
 
     // Override decimals to ensure 18
@@ -70,12 +58,9 @@ contract LuminaryToken is ERC20, ReentrancyGuard {
         return 18;
     }
 
-    // Helper: Mint 25% of current supply to contract, respect MAX_SUPPLY
+    // Helper: Mint 25% of current supply to contract
     function _mintToContract() internal {
         uint256 amount = totalSupply().mul(REWARD_PERCENT).div(100);
-        if (totalSupply().add(amount) > MAX_SUPPLY) {
-            amount = MAX_SUPPLY.sub(totalSupply());
-        }
         if (amount > 0) {
             _mint(address(this), amount);
             mintedRewards = mintedRewards.add(amount);
@@ -88,21 +73,13 @@ contract LuminaryToken is ERC20, ReentrancyGuard {
         swapCount = 0;
     }
 
-    // Helper: Increment swapThreshold by 1, cap at MAX_THRESHOLD
-    function _updateSwapThreshold() internal {
-        if (swapThreshold < MAX_THRESHOLD) {
-            swapThreshold = swapThreshold.add(1);
-        }
-    }
-
-    // Mint 25% of supply to contract, reset swapCount, update threshold
+    // Mint 25% of supply to contract, reset swapCount
     function mintRewards() external nonReentrant {
         require(swapCount > swapThreshold, "Swap count below threshold");
 
         // Execute steps via helpers
         _mintToContract();
         _resetSwapCount();
-        _updateSwapThreshold();
     }
 
     // Claim reward: 25% of caller's balance, if eligible
@@ -118,24 +95,6 @@ contract LuminaryToken is ERC20, ReentrancyGuard {
 
         // Transfer reward
         _transfer(address(this), msg.sender, reward);
-    }
-
-    // Claim initial: Mint 1 token to caller, max 20 claims
-    function claimInitial() external nonReentrant {
-        require(!initialClaimant[msg.sender], "Already claimed");
-        require(initialClaimCount < MAX_INITIAL_CLAIMS, "Max claims reached");
-        require(totalSupply().add(INITIAL_CLAIM_AMOUNT) <= MAX_SUPPLY, "Exceeds max supply");
-
-        initialClaimant[msg.sender] = true;
-        initialClaimCount = initialClaimCount.add(1);
-
-        // Set reward eligibility if first tokens received
-        if (balanceOf(msg.sender) == 0) {
-            rewardEligibility[msg.sender] = block.timestamp;
-        }
-
-        _mint(msg.sender, INITIAL_CLAIM_AMOUNT);
-        emit Minted(msg.sender, INITIAL_CLAIM_AMOUNT);
     }
 
     // Override transfer to include fee and eligibility
