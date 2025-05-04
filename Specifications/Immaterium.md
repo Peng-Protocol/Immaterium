@@ -263,10 +263,6 @@ Stores the latest swap threshold. Max threshold is 2500.
 
 Mapping, stores the claimant address and timestamp since last claimReward call. Is set initially by claimInitial, reset by transfers and transferFroms. 
 
-- initialClaimants 
-
-Mapping, stores the addresses that have claimed via `claimInitial`.
-
 - supply 
 
 Initial supply is 10. 
@@ -274,7 +270,7 @@ Initial supply is 10.
 **Functions** 
 - mintRewards
 
-Mint 25% of current supply to self. Resets swapCount to "0". Increases swapThreshold by a factor of "1", unless max threshold is reached. Can only be called if swapCount is > swapThreshold. Extract steps into helpers. Nonreentrant. Max supply is 25000, ensure mints reach max exactly amd do not exceed it. 
+Mint 25% of current supply to self. Resets swapCount to "0". Increases swapThreshold by a factor of "1", unless max threshold is reached. Can only be called if swapCount is > swapThreshold. Extract steps into helpers. Nonreentrant. 
 
 - claimReward
 
@@ -284,15 +280,49 @@ Allows any holder to claim LUX from the contract balance, reward is an amount eq
 
 Each transfer or transferFrom takes a 0.05% fee which is held in the contract. 
 
-- claimInitial 
-
-Allows up to (20) an addresses to claim (1) LUX, addresses cannot claim more than once, claimants are added to `initialClaimants`. Nonreentrant. 
-
 
 
 # **Frontend**
+All dependencies are local, no CDNs, uses alpine.js for state management, bootstrap-5 for CSS and Vanilla Javascript for complex logic. 
+To be deployed to IPFS via 4everland. 
+
+## **Section 1** 
+### **Connect Wallet (Button)**
+Presents the wallet connection pop-up modal. Positioned top right of the page. 
+Button displays text "Connect Wallet", in current button styles. 
+
+### **Network Select (Button)**
+Presents browser pop-up "connect wallet first" if wallet is not connected. 
+If connected checks if user wallet is using "correct network", if not check if user wallet has "correct network", if not push request to add network. 
+Stores if network is known but not connected, then push request to change network. 
+Button displays "🌐" if user network is not correct, or "sonicLogo.png" from "./assets/" if network is not correct. 
+Buttoj is displayed top left aligned left of "Connect Wallet" button with a few pixels of space. 
+
+
+### **Immaterium Logo**
+Displayed top left, is somewhat small but still visible. 
+Is "./assets/immateriumLogo.png". 
+
+## **Section 2**
+### **Landing Panel**
+A penel containing three elements : 
+
+**Landing Blurb**
+Text that reads; "Welcome! Immaterium 
+
+## **Section 3**
+
+## **Background**
+
+### **Wallet Connection Pop-up modal**
+Presets a pop-up that appears centered above everything else, can be clicked or tapped out of to close. 
+
+- Browser Wallet 
+Uses window.ethereum 
 
 // Implement basic features, exclude OMF and LUX, exclude chainMail, comment to-do
+
+// flow should be all posts are public until first hearer, then elect must set keys before billing, 
 
 Frontend: Gets links from lumen string, determines what kind of data it is, avoids malicious Javascript execution. Support images - PDFs and markdown at first, then later music - videos etc.
 
@@ -329,7 +359,11 @@ Before billing fees, set cycle key, use cycle key for every lumination.
 
 // Show bonus amount before claim fee button. 
 
+// "you have no (token)" during hear, "get (token)" button presents pop-up that reads "coming soon!", if LUX push transaction to 
+
 // can't set cycle key until after first hearer and billing, all posts public till then
+
+// landing page has link to "faucet" "All transactions cost gas, get some at [link]"
 
 // warning about chapter name length, will not be mapped. 
 
