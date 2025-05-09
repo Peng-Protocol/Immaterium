@@ -4,21 +4,26 @@ pragma solidity ^0.8.1;
 
 /*
  * immateriumChapter.sol
- * version 0.0.9:
- * - Fixed typo in addChapterName by removing erroneous 'flurry' text.
- * - Reinstated chapterMapperSet check in setChapterMapper to ensure one-time setting by factory at deployment.
- * - Updated billFee to accept cell parameter for batch processing to prevent out-of-gas errors.
- * - Added nextFee check to nextCycleKey to restrict execution to when fees are due or contract is newly deployed.
- * - Renamed setCycleKey to nextCycleKey and updated signature to handle cellIndex and ownKeys.
- * - Moved ownKeys parsing and ownCycle updates from billFee to nextCycleKey.
- * - Updated billFee to take no parameters, allow billing when nextFee == 0, and remove ownCycle updates.
- * - Introduced cell concept: hearers grouped into cells of 100 for gas-efficient ownKeys updates.
- * - Added getCellHeight to return total number of cells.
- * - Added getCellHearerCount to return number of hearers in a specific cell.
- * - Added nextFeeInSeconds to return remaining time until nextFee in seconds, minutes, and hours.
- * - Ensured graceful degradation with BillingFailed and KeyUpdateFailed events for failed conditions.
- * - Updated IimmateriumChapter interface to reflect new function signatures.
- * - Ensured explicit casting, no inline assembly, and compatibility with Solidity ^0.8.1.
+ * version 0.1.11:
+ * - Modified billAndSet to set Hearer.ownKey to the ownKey corresponding to the highest cycleIndex; renamed hearerCycleToOwnKey to historicalKeys for clarity.
+ * - Modified nextCycleBill to skip setting nextFee when no hearers exist, aligning with desired behavior.
+ * - Replaced nextCycleKey and billFee with nextCycleBill, reusing cellIndex for key updates and billing, preventing malicious cycle manipulation.
+ * - Modified billAndSet to allow setting keys for cycles up to chapterCycle and set ownCycle to the highest provided cycleIndex.
+ * - Modified hear function to set ownCycle to 1 for new hearers to align with billAndSet cycleIndexes validation.
+ * - Modified billAndSet to validate and update keys before billing, preventing billing on key update failures.
+ * - Added validation in billAndSet to ensure cycleIndexes values are >= 1, rejecting 0 as a valid index.
+ * - Improved error handling in billAndSet and _chargeHearer to emit specific BillingFailed reasons (e.g., Inactive hearer, Insufficient allowance/balance, Transfer failed).
+ * - Modified nextCycleKey to allow setting cycleKey when no hearers exist if cellIndex is 0, ignoring ownKeys.
+ * - Confirmed billAndSet does not increment chapterCycle, as intended.
+ * - Modified hear function to set ownCycle to 0 for new hearers instead of chapterCycle.
+ * - Added totalVolume to track cumulative fees across all cycles, populated in _chargeHearer.
+ * - Fixed typo in lastCycleVolume declaration by removing erroneous text.
+ * - Removed getOldOwnKey function as it directly accessed hearerCycleToOwnKey mapping.
+ * - Modified billAndSet to only bill hearers whose ownCycle is below chapterCycle, emitting BillingFailed if not.
+ * - Added billAndSet function to bill fees and set old ownKeys for a hearer, updating ownCycle to current chapterCycle.
+ * - Added hearerCycleToOwnKey mapping for efficient old ownKey queries.
+ * - Modified hear function to not bill fees upfront, only adding hearer to hearers and chapterMapper.
+ * - Updated IimmateriumChapter interface to include new billAndSet and getOldOwnKey functions (later removed getOldOwnKey).
  */
 
 import "./imports/IERC20.sol";
@@ -34,7 +39,6 @@ interface IChapterMapper {
 }
 
 interface IimmateriumChapter {
-    function billFee(uint256 cell) external;
     function hear() external;
     function silence() external;
     function luminate(string calldata dataEntry) external;
@@ -44,10 +48,11 @@ interface IimmateriumChapter {
     function setFeeInterval(uint256 interval) external;
     function setChapterFee(uint256 fee) external;
     function setChapterToken(address token) external;
-    function nextCycleKey(string calldata key, uint256 cellIndex, string calldata ownKeys) external;
     function setChapterMapper(address mapper) external;
     function addChapterImage(string calldata image) external;
     function addChapterName(string calldata name) external;
+    function billAndSet(address hearer, string calldata cycleIndexes, string calldata ownKeys) external;
+    function nextCycleBill(string calldata key, uint256 cellIndex, string calldata ownKeys) external;
     function searchHearers() external view returns (address[] memory, uint256[] memory);
     function isHearer(address hearer) external view returns (address, string memory, uint256, bool);
     function getLumen(uint256 index) external view returns (string memory, uint256, uint256, uint256);
@@ -80,6 +85,7 @@ contract immateriumChapter is IimmateriumChapter {
     address public chapterToken;
     address public chapterMapper;
     uint256 public lastCycleVolume;
+    uint256 public totalVolume;
     string public chapterName;
     string public chapterImage;
     uint256 public lumenHeight;
@@ -88,6 +94,7 @@ contract immateriumChapter is IimmateriumChapter {
     Lumen[] public lumens;
     string[] public cycleKey;
     mapping(string => Hearer) public oldKeys;
+    mapping(address => mapping(uint256 => string)) public historicalKeys;
 
     bool private electSet;
     bool private feeIntervalSet;
@@ -172,21 +179,31 @@ contract immateriumChapter is IimmateriumChapter {
     // Helper: Charge fee
     function _chargeHearer(uint256 index) private returns (bool) {
         Hearer storage hearer = hearers[index];
-        if (
-            hearer.status &&
-            IERC20(chapterToken).allowance(hearer.hearerAddress, address(this)) >= chapterFee &&
-            IERC20(chapterToken).balanceOf(hearer.hearerAddress) >= chapterFee
-        ) {
-            try IERC20(chapterToken).transferFrom(hearer.hearerAddress, elect, chapterFee) returns (bool success) {
-                if (success) {
-                    lastCycleVolume += chapterFee;
-                    return true;
-                }
-            } catch {
-                emit BillingFailed(hearer.hearerAddress, "Transfer failed");
-            }
+        if (!hearer.status) {
+            emit BillingFailed(hearer.hearerAddress, "Inactive hearer");
+            return false;
         }
-        return false;
+        if (IERC20(chapterToken).allowance(hearer.hearerAddress, address(this)) < chapterFee) {
+            emit BillingFailed(hearer.hearerAddress, "Insufficient allowance");
+            return false;
+        }
+        if (IERC20(chapterToken).balanceOf(hearer.hearerAddress) < chapterFee) {
+            emit BillingFailed(hearer.hearerAddress, "Insufficient balance");
+            return false;
+        }
+        try IERC20(chapterToken).transferFrom(hearer.hearerAddress, elect, chapterFee) returns (bool success) {
+            if (success) {
+                lastCycleVolume += chapterFee;
+                totalVolume += chapterFee;
+                return true;
+            } else {
+                emit BillingFailed(hearer.hearerAddress, "Transfer failed");
+                return false;
+            }
+        } catch {
+            emit BillingFailed(hearer.hearerAddress, "Transfer failed");
+            return false;
+        }
     }
 
     // Helper: Shift hearer entries to close gaps
@@ -219,26 +236,8 @@ contract immateriumChapter is IimmateriumChapter {
         lumenHeight = lumenHeight + 1;
     }
 
-    function billFee(uint256 cell) external override electOnly {
-        if (nextFee != 0 && nextFee > block.timestamp) {
-            emit BillingFailed(address(0), "Fees not due");
-        } else {
-            lastCycleVolume = 0;
-            uint256 start = cell * 100;
-            uint256 end = start + 100 > hearers.length ? hearers.length : start + 100;
-            for (uint256 i = start; i < end; i++) {
-                if (hearers[i].status) {
-                    _chargeHearer(i);
-                }
-            }
-            _cleanInactiveHearers();
-            nextFee = block.timestamp + feeInterval;
-        }
-    }
-
     function hear() external override {
-        require(IERC20(chapterToken).transferFrom(msg.sender, elect, chapterFee), "Fee transfer failed");
-        hearers.push(Hearer(msg.sender, "", chapterCycle, true));
+        hearers.push(Hearer(msg.sender, "", 1, true));
         if (chapterMapper != address(0)) {
             IChapterMapper(chapterMapper).addChapter(msg.sender, address(this));
         }
@@ -301,14 +300,18 @@ contract immateriumChapter is IimmateriumChapter {
         chapterMapperSet = true;
     }
 
-    function nextCycleKey(string calldata key, uint256 cellIndex, string calldata ownKeys) external override electOnly {
+    function nextCycleBill(string calldata key, uint256 cellIndex, string calldata ownKeys) external override electOnly {
         if (nextFee != 0 && nextFee > block.timestamp) {
             emit KeyUpdateFailed(address(0), "Fees not due");
             return;
         }
 
         uint256 cellHeight = (hearers.length + 99) / 100;
-        if (cellIndex >= cellHeight) {
+        if (hearers.length == 0 && cellIndex != 0) {
+            emit KeyUpdateFailed(address(0), "Invalid cell index");
+            return;
+        }
+        if (hearers.length > 0 && cellIndex >= cellHeight) {
             emit KeyUpdateFailed(address(0), "Invalid cell index");
             return;
         }
@@ -316,32 +319,116 @@ contract immateriumChapter is IimmateriumChapter {
         cycleKey.push(key);
         chapterCycle++;
 
-        uint256 startIndex = cellIndex * 100;
-        uint256 endIndex = startIndex + 100 > hearers.length ? hearers.length : startIndex + 100;
-        string[] memory parsedKeys = _parseOwnKeys(ownKeys);
-        uint256 activeCount = 0;
+        if (hearers.length > 0) {
+            lastCycleVolume = 0;
+            uint256 startIndex = cellIndex * 100;
+            uint256 endIndex = startIndex + 100 > hearers.length ? hearers.length : startIndex + 100;
 
-        for (uint256 i = startIndex; i < endIndex; i++) {
-            if (hearers[i].status) {
-                activeCount++;
-            }
-        }
-
-        if (parsedKeys.length != activeCount) {
-            emit KeyUpdateFailed(address(0), "Mismatched ownKeys count");
-        } else {
-            uint256 keyIndex = 0;
-            for (uint256 i = startIndex; i < endIndex && keyIndex < parsedKeys.length; i++) {
+            // Bill hearers in the cell
+            for (uint256 i = startIndex; i < endIndex; i++) {
                 if (hearers[i].status) {
-                    Hearer storage hearer = hearers[i];
-                    oldKeys[hearer.ownKey] = Hearer(hearer.hearerAddress, hearer.ownKey, hearer.ownCycle, false);
-                    hearer.ownKey = parsedKeys[keyIndex];
-                    hearer.ownCycle = chapterCycle;
-                    emit KeyUpdated(hearer.hearerAddress, hearer.ownKey);
-                    keyIndex++;
+                    _chargeHearer(i);
                 }
             }
+
+            // Update keys for active hearers in the cell
+            string[] memory parsedKeys = _parseOwnKeys(ownKeys);
+            uint256 activeCount = 0;
+
+            for (uint256 i = startIndex; i < endIndex; i++) {
+                if (hearers[i].status) {
+                    activeCount++;
+                }
+            }
+
+            if (parsedKeys.length != activeCount) {
+                emit KeyUpdateFailed(address(0), "Mismatched ownKeys count");
+            } else {
+                uint256 keyIndex = 0;
+                for (uint256 i = startIndex; i < endIndex && keyIndex < parsedKeys.length; i++) {
+                    if (hearers[i].status) {
+                        Hearer storage hearer = hearers[i];
+                        oldKeys[hearer.ownKey] = Hearer(hearer.hearerAddress, hearer.ownKey, hearer.ownCycle, false);
+                        historicalKeys[hearer.hearerAddress][hearer.ownCycle] = hearer.ownKey;
+                        hearer.ownKey = parsedKeys[keyIndex];
+                        hearer.ownCycle = chapterCycle;
+                        emit KeyUpdated(hearer.hearerAddress, hearer.ownKey);
+                        keyIndex++;
+                    }
+                }
+            }
+
+            _cleanInactiveHearers();
+            nextFee = block.timestamp + feeInterval;
         }
+    }
+
+    function billAndSet(address hearer, string calldata cycleIndexes, string calldata ownKeys) external override electOnly {
+        uint256 hearerIndex = type(uint256).max;
+        for (uint256 i = 0; i < hearers.length; i++) {
+            if (hearers[i].hearerAddress == hearer && hearers[i].status) {
+                hearerIndex = i;
+                break;
+            }
+        }
+        if (hearerIndex == type(uint256).max) {
+            emit BillingFailed(hearer, "Not an active hearer");
+            return;
+        }
+
+        Hearer storage h = hearers[hearerIndex];
+        if (h.ownCycle >= chapterCycle) {
+            emit BillingFailed(hearer, "Hearer cycle not behind chapter cycle");
+            return;
+        }
+
+        // Validate and update keys before billing
+        uint256[] memory parsedIndexes = _parseIndexes(cycleIndexes);
+        string[] memory parsedKeys = _parseOwnKeys(ownKeys);
+        if (parsedIndexes.length != parsedKeys.length) {
+            emit KeyUpdateFailed(hearer, "Mismatched indexes and keys");
+            return;
+        }
+
+        // Validate cycle indexes and find max
+        uint256 maxCycleIndex = 0;
+        for (uint256 i = 0; i < parsedIndexes.length; i++) {
+            if (parsedIndexes[i] < 1) {
+                emit KeyUpdateFailed(hearer, "Cycle index must be at least 1");
+                return;
+            }
+            if (parsedIndexes[i] > chapterCycle) {
+                emit KeyUpdateFailed(hearer, "Cycle index exceeds chapter cycle");
+                return;
+            }
+            if (parsedIndexes[i] > maxCycleIndex) {
+                maxCycleIndex = parsedIndexes[i];
+            }
+        }
+
+        // Update keys
+        oldKeys[h.ownKey] = Hearer(h.hearerAddress, h.ownKey, h.ownCycle, false);
+        historicalKeys[h.hearerAddress][h.ownCycle] = h.ownKey;
+
+        string memory maxCycleKey = "";
+        for (uint256 i = 0; i < parsedIndexes.length; i++) {
+            historicalKeys[hearer][parsedIndexes[i]] = parsedKeys[i];
+            oldKeys[parsedKeys[i]] = Hearer(hearer, parsedKeys[i], parsedIndexes[i], false);
+            if (parsedIndexes[i] == maxCycleIndex) {
+                maxCycleKey = parsedKeys[i];
+            }
+        }
+
+        // Bill hearer only after successful key updates
+        if (!_chargeHearer(hearerIndex)) {
+            return; // Error emitted in _chargeHearer
+        }
+
+        h.ownCycle = maxCycleIndex;
+        if (bytes(maxCycleKey).length > 0) {
+            h.ownKey = maxCycleKey;
+        }
+        emit KeyUpdated(hearer, h.ownKey);
     }
 
     function addChapterImage(string calldata image) external override electOnly {
