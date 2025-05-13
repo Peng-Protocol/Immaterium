@@ -4,10 +4,14 @@ pragma solidity ^0.8.1;
 
 /*
  * immateriumChapter.sol
- * version 0.1.12:
- * - Added getLaggards view function to return addresses of active hearers with ownCycle < chapterCycle.
- * - Modified nextCycleBill to mark unbilled hearers as inactive and call _cleanInactiveHearers after billing and key updates.
- * - Modified searchHearers to remove 1k iteration limit, iterating entire hearers array.
+ * version 0.1.13:
+ * - Added getCellHearers view function to return hearer addresses in a cell by index order.
+ * - Modified nextCycleBill to use pendingCycle for cycle tracking, only updating chapterCycle and nextFee when the highest cell is billed.
+ * - Added hearer eligibility check in nextCycleBill to skip hearers with ownCycle >= chapterCycle, emitting BillingFailed for ineligible hearers.
+ * - Previous changes:
+ *   - Added getLaggards view function to return addresses of active hearers with ownCycle < chapterCycle.
+ *   - Modified nextCycleBill to mark unbilled hearers as inactive and call _cleanInactiveHearers after billing and key updates.
+ *   - Modified searchHearers to remove 1k iteration limit, iterating entire hearers array.
  */
 
 import "./imports/IERC20.sol";
@@ -45,6 +49,7 @@ interface IimmateriumChapter {
     function getCellHeight() external view returns (uint256);
     function getCellHearerCount(uint256 cellIndex) external view returns (uint256);
     function getLaggards() external view returns (address[] memory);
+    function getCellHearers(uint256 cellIndex) external view returns (address[] memory);
 }
 
 contract immateriumChapter is IimmateriumChapter {
@@ -65,6 +70,7 @@ contract immateriumChapter is IimmateriumChapter {
     address public elect;
     uint256 public feeInterval;
     uint256 public chapterCycle;
+    uint256 public pendingCycle; // Tracks unofficial cycle until highest cell is billed
     uint256 public chapterFee;
     uint256 public nextFee;
     address public chapterToken;
@@ -166,6 +172,10 @@ contract immateriumChapter is IimmateriumChapter {
         Hearer storage hearer = hearers[index];
         if (!hearer.status) {
             emit BillingFailed(hearer.hearerAddress, "Inactive hearer");
+            return false;
+        }
+        if (hearer.ownCycle >= chapterCycle) {
+            emit BillingFailed(hearer.hearerAddress, "Hearer cycle not behind chapter cycle");
             return false;
         }
         if (IERC20(chapterToken).allowance(hearer.hearerAddress, address(this)) < chapterFee) {
@@ -305,8 +315,8 @@ contract immateriumChapter is IimmateriumChapter {
             return;
         }
 
+        pendingCycle++; // Increment pending cycle
         cycleKey.push(key);
-        chapterCycle++;
 
         if (hearers.length > 0) {
             lastCycleVolume = 0;
@@ -316,7 +326,7 @@ contract immateriumChapter is IimmateriumChapter {
             // Bill hearers in the cell and mark unbilled as inactive
             for (uint256 i = startIndex; i < endIndex; i++) {
                 if (hearers[i].status) {
-                    _chargeHearer(i); // Marks hearer inactive if billing fails
+                    _chargeHearer(i); // Marks hearer inactive if billing fails or cycle ineligible
                 }
             }
 
@@ -340,7 +350,7 @@ contract immateriumChapter is IimmateriumChapter {
                         oldKeys[hearer.ownKey] = Hearer(hearer.hearerAddress, hearer.ownKey, hearer.ownCycle, false);
                         historicalKeys[hearer.hearerAddress][hearer.ownCycle] = hearer.ownKey;
                         hearer.ownKey = parsedKeys[keyIndex];
-                        hearer.ownCycle = chapterCycle;
+                        hearer.ownCycle = pendingCycle; // Use pendingCycle for hearer updates
                         emit KeyUpdated(hearer.hearerAddress, hearer.ownKey);
                         keyIndex++;
                     }
@@ -348,7 +358,12 @@ contract immateriumChapter is IimmateriumChapter {
             }
 
             _cleanInactiveHearers();
-            nextFee = block.timestamp + feeInterval;
+
+            // Finalize cycle and fee only for the highest cell
+            if (cellIndex == cellHeight - 1) {
+                chapterCycle = pendingCycle;
+                nextFee = block.timestamp + feeInterval;
+            }
         }
     }
 
@@ -532,5 +547,21 @@ contract immateriumChapter is IimmateriumChapter {
             }
         }
         return lagging;
+    }
+
+    function getCellHearers(uint256 cellIndex) external view override returns (address[] memory) {
+        uint256 cellHeight = (hearers.length + 99) / 100;
+        if (cellIndex >= cellHeight) {
+            revert("Invalid cell index");
+        }
+        uint256 startIndex = cellIndex * 100;
+        uint256 endIndex = startIndex + 100 > hearers.length ? hearers.length : startIndex + 100;
+        uint256 count = endIndex - startIndex;
+
+        address[] memory cellHearers = new address[](count);
+        for (uint256 i = startIndex; i < endIndex; i++) {
+            cellHearers[i - startIndex] = hearers[i].hearerAddress;
+        }
+        return cellHearers;
     }
 }
