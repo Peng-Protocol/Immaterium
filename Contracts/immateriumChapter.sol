@@ -4,26 +4,10 @@ pragma solidity ^0.8.1;
 
 /*
  * immateriumChapter.sol
- * version 0.1.11:
- * - Modified billAndSet to set Hearer.ownKey to the ownKey corresponding to the highest cycleIndex; renamed hearerCycleToOwnKey to historicalKeys for clarity.
- * - Modified nextCycleBill to skip setting nextFee when no hearers exist, aligning with desired behavior.
- * - Replaced nextCycleKey and billFee with nextCycleBill, reusing cellIndex for key updates and billing, preventing malicious cycle manipulation.
- * - Modified billAndSet to allow setting keys for cycles up to chapterCycle and set ownCycle to the highest provided cycleIndex.
- * - Modified hear function to set ownCycle to 1 for new hearers to align with billAndSet cycleIndexes validation.
- * - Modified billAndSet to validate and update keys before billing, preventing billing on key update failures.
- * - Added validation in billAndSet to ensure cycleIndexes values are >= 1, rejecting 0 as a valid index.
- * - Improved error handling in billAndSet and _chargeHearer to emit specific BillingFailed reasons (e.g., Inactive hearer, Insufficient allowance/balance, Transfer failed).
- * - Modified nextCycleKey to allow setting cycleKey when no hearers exist if cellIndex is 0, ignoring ownKeys.
- * - Confirmed billAndSet does not increment chapterCycle, as intended.
- * - Modified hear function to set ownCycle to 0 for new hearers instead of chapterCycle.
- * - Added totalVolume to track cumulative fees across all cycles, populated in _chargeHearer.
- * - Fixed typo in lastCycleVolume declaration by removing erroneous text.
- * - Removed getOldOwnKey function as it directly accessed hearerCycleToOwnKey mapping.
- * - Modified billAndSet to only bill hearers whose ownCycle is below chapterCycle, emitting BillingFailed if not.
- * - Added billAndSet function to bill fees and set old ownKeys for a hearer, updating ownCycle to current chapterCycle.
- * - Added hearerCycleToOwnKey mapping for efficient old ownKey queries.
- * - Modified hear function to not bill fees upfront, only adding hearer to hearers and chapterMapper.
- * - Updated IimmateriumChapter interface to include new billAndSet and getOldOwnKey functions (later removed getOldOwnKey).
+ * version 0.1.12:
+ * - Added getLaggards view function to return addresses of active hearers with ownCycle < chapterCycle.
+ * - Modified nextCycleBill to mark unbilled hearers as inactive and call _cleanInactiveHearers after billing and key updates.
+ * - Modified searchHearers to remove 1k iteration limit, iterating entire hearers array.
  */
 
 import "./imports/IERC20.sol";
@@ -60,6 +44,7 @@ interface IimmateriumChapter {
     function nextFeeInSeconds() external view returns (uint256, uint256, uint256);
     function getCellHeight() external view returns (uint256);
     function getCellHearerCount(uint256 cellIndex) external view returns (uint256);
+    function getLaggards() external view returns (address[] memory);
 }
 
 contract immateriumChapter is IimmateriumChapter {
@@ -185,10 +170,12 @@ contract immateriumChapter is IimmateriumChapter {
         }
         if (IERC20(chapterToken).allowance(hearer.hearerAddress, address(this)) < chapterFee) {
             emit BillingFailed(hearer.hearerAddress, "Insufficient allowance");
+            hearer.status = false;
             return false;
         }
         if (IERC20(chapterToken).balanceOf(hearer.hearerAddress) < chapterFee) {
             emit BillingFailed(hearer.hearerAddress, "Insufficient balance");
+            hearer.status = false;
             return false;
         }
         try IERC20(chapterToken).transferFrom(hearer.hearerAddress, elect, chapterFee) returns (bool success) {
@@ -198,10 +185,12 @@ contract immateriumChapter is IimmateriumChapter {
                 return true;
             } else {
                 emit BillingFailed(hearer.hearerAddress, "Transfer failed");
+                hearer.status = false;
                 return false;
             }
         } catch {
             emit BillingFailed(hearer.hearerAddress, "Transfer failed");
+            hearer.status = false;
             return false;
         }
     }
@@ -324,10 +313,10 @@ contract immateriumChapter is IimmateriumChapter {
             uint256 startIndex = cellIndex * 100;
             uint256 endIndex = startIndex + 100 > hearers.length ? hearers.length : startIndex + 100;
 
-            // Bill hearers in the cell
+            // Bill hearers in the cell and mark unbilled as inactive
             for (uint256 i = startIndex; i < endIndex; i++) {
                 if (hearers[i].status) {
-                    _chargeHearer(i);
+                    _chargeHearer(i); // Marks hearer inactive if billing fails
                 }
             }
 
@@ -443,7 +432,7 @@ contract immateriumChapter is IimmateriumChapter {
 
     function searchHearers() external view override returns (address[] memory, uint256[] memory) {
         uint256 count = 0;
-        for (uint256 i = 0; i < hearers.length && i < 1000; i++) {
+        for (uint256 i = 0; i < hearers.length; i++) {
             if (
                 hearers[i].status &&
                 hearers[i].ownCycle < chapterCycle &&
@@ -457,7 +446,7 @@ contract immateriumChapter is IimmateriumChapter {
         address[] memory eligible = new address[](count);
         uint256[] memory cycles = new uint256[](count);
         uint256 j = 0;
-        for (uint256 i = 0; i < hearers.length && i < 1000 && j < count; i++) {
+        for (uint256 i = 0; i < hearers.length && j < count; i++) {
             if (
                 hearers[i].status &&
                 hearers[i].ownCycle < chapterCycle &&
@@ -524,5 +513,24 @@ contract immateriumChapter is IimmateriumChapter {
         uint256 startIndex = cellIndex * 100;
         uint256 endIndex = startIndex + 100 > hearers.length ? hearers.length : startIndex + 100;
         return endIndex - startIndex;
+    }
+
+    function getLaggards() external view override returns (address[] memory) {
+        uint256 count = 0;
+        for (uint256 i = 0; i < hearers.length; i++) {
+            if (hearers[i].status && hearers[i].ownCycle < chapterCycle) {
+                count++;
+            }
+        }
+
+        address[] memory lagging = new address[](count);
+        uint256 j = 0;
+        for (uint256 i = 0; i < hearers.length && j < count; i++) {
+            if (hearers[i].status && hearers[i].ownCycle < chapterCycle) {
+                lagging[j] = hearers[i].hearerAddress;
+                j++;
+            }
+        }
+        return lagging;
     }
 }

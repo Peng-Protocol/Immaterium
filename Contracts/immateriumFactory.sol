@@ -4,26 +4,9 @@ pragma solidity ^0.8.1;
 
 /*
  * immateriumFactory.sol
- * version 0.0.5:
- * - Added chapterHeight to track total number of deployed chapters.
- * - Added chapterList array for indexing valid chapters.
- * - Added query functions: getChapterHeight, getChapterAtIndex, getAllChapters.
- * - Updated _storeChapter to store chapters in chapterList and increment chapterHeight.
- * - Added IImmateriumFactory interface for type-safe external function declarations.
- * - Fixed typo in deployChapter: 'chapellect' corrected to 'elect'.
- * - Fixed deployChapter to call _configureChapter with all 5 required arguments.
- * - Previous changes (v0.0.4):
- *   - Initial implementation with LUX token, chapterLibrary, and validChapters mapping.
- *   - deployChapter uses external chapterLibrary call with helper functions.
- *   - Ownable imported, deployer set as initial owner.
- *   - Event emitted on chapter deployment.
- *   - Updated _storeChapter to store all deployed chapters in validChapters without LUX check.
- *   - Added addressOfChapterMapper state variable, setAddressOfChapterMapper function, and updated deployChapter to set chapterMapper.
- *   - Removed salt parameter from deployChapter; salt now generated internally using keccak256 with timestamp, sender, and nonce.
- *   - Added nonce state variable for unique salt generation.
- *   - Changed chapterLibrary to ChapterLogic (regular contract) for deploying immateriumChapter (April 30, 2025).
- *   - Renamed chapterLibrary to chapterLogic and setChapterLibrary to setChapterLogic.
- *   - Added IChapterLogic interface for type-safe calls to ChapterLogic.
+ * version 0.0.6:
+ * - Renamed addressOfChapterMapper to chapterMapper in state variables, setAddressOfChapterMapper to setChapterMapper in interface and contract.
+ * - Updated deployChapter to use setChapterMapper when setting chapterMapper on deployed chapter.
  */
 
 import "./imports/Ownable.sol";
@@ -36,7 +19,7 @@ interface IChapterLogic {
 interface IImmateriumFactory {
     function setLux(address lux) external;
     function setChapterLogic(address logic) external;
-    function setAddressOfChapterMapper(address mapper) external;
+    function setChapterMapper(address mapper) external;
     function deployChapter(address elect, uint256 feeInterval, uint256 chapterFee, address chapterToken) external;
     function getChapterHeight() external view returns (uint256);
     function getChapterAtIndex(uint256 index) external view returns (address);
@@ -46,7 +29,7 @@ interface IImmateriumFactory {
 contract immateriumFactory is Ownable {
     address public LUX;
     address public chapterLogic;
-    address public addressOfChapterMapper;
+    address public chapterMapper;
     mapping(address => bool) public validChapters;
     uint256 public chapterHeight; // Tracks total number of chapters
     address[] public chapterList; // Indexes valid chapters
@@ -109,8 +92,8 @@ contract immateriumFactory is Ownable {
         chapterLogic = logic;
     }
 
-    function setAddressOfChapterMapper(address mapper) external onlyOwner {
-        addressOfChapterMapper = mapper;
+    function setChapterMapper(address mapper) external onlyOwner {
+        chapterMapper = mapper;
     }
 
     function deployChapter(
@@ -129,9 +112,9 @@ contract immateriumFactory is Ownable {
         _configureChapter(chapter, elect, feeInterval, chapterFee, chapterToken);
         _storeChapter(chapter);
 
-        if (addressOfChapterMapper != address(0)) {
+        if (chapterMapper != address(0)) {
             (bool success, ) = chapter.call(
-                abi.encodeWithSignature("setChapterMapper(address)", addressOfChapterMapper)
+                abi.encodeWithSignature("setChapterMapper(address)", chapterMapper)
             );
             require(success, "setChapterMapper failed");
         }
