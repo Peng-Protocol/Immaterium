@@ -527,7 +527,7 @@ Has warning if chapterName is longer than 100 characters; "Too long, can be used
 
 **Chapter Image**
 Displays the image and link string of the chapter, is a field, can be editted, has "💾" button that becomes clickable/tappable if changes are made, "💾" pushes a transaction for "addChapterImage (0x0691c1bb)" on the immaterium chapter. 
-Has a "⬆️" button that presents the Imgur modal to appear above the current modal, uses image link from uploaded image in Imgur modal. 
+Has a "⬆️" button that presents the Catbox modal to appear above the current modal, uses image link from uploaded image in Catbox modal. 
 
 **Pending Fees**
 Queries nextFee, if elapsed not then return "0" as pending fees, if elapsed then: queries "searchHearers (0x448e0c9c)" and gets the number of returned addresses, calculates : "number of hearers * chapterFee", displays the pending fee amount as ; "(amount) (ticker symbol)". 
@@ -553,13 +553,13 @@ Displayed as a red dot at the top right of the chapter image. Is present if ther
 **Elect**
 Displays the elect address in a field, field can be edited to set new elect using "💾" button next to the field. Ensures new address is valid, presents pop-up with warning "You are about to give away control of your chapter" with "ok" and "cancel" options. Pushes transaction for "reElect (0xfc7be2b2)". 
 
-### **Imgur Modal**
-Has oAuth integration where user can input their Imgur login details or create new account once account is created or logged in, save session token for future use. 
-Allows user to upload new files and fetch direct links to the files ending with the file name extension. 
-Has a simple galley of user files based on Imgur's interface, allows uploading multiple files concurrently and fetching their file links. 
+### **Catbox Modal**
+Catbox API is anonymous and free to use with some limits. 
+This modal allows user to upload new files and fetch direct links to the files ending with the file name extension. 
+Has a simple galley of cached user files, allows uploading multiple files concurrently and fetching their file links. 
 
 ### **Lumen Creation Modal**
-Has field for dataEntry, has "⬆️" button that presents Imgur modal, uses retrieved links of uploaded file(s) in data entry for "luminate (0xead08026)". Has option for "public" or "private" which is a single button toggle, default ia private and encrypts the post with the pure cycleKey, if not then no encryption happens and ownKeys are set to "0" . Pushes luminate when "⏫" button is  licked. dataEntry field accepts text, links are pasted into the field. Displays post modal for the new lumen once created. 
+Has field for dataEntry, has "⬆️" button that presents Catbox modal, uses retrieved links of uploaded file(s) in data entry for "luminate (0xead08026)". Has option for "public" or "private" which is a single button toggle, default ia private and encrypts the post with the pure cycleKey, if not then no encryption happens and ownKeys are set to "0" . Pushes luminate when "⏫" button is  licked. dataEntry field accepts text, links are pasted into the field. Displays post modal for the new lumen once created. 
 
 ### **Testnet Addresses**
 - **Factory** 
