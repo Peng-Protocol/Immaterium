@@ -435,7 +435,7 @@ Upper left panel. Uses the link in "chapterImage (0x17f4e7e1)" on the immaterium
 Upper left panel  Displays the string in "chapterName (0x06a76993)" on the immaterium chapter. 
 
 **Pending Fees** 
-Top left panel. Fetches nextFee timestamp using "nextFee (0xa0fb5d94)" at the chapter address, parses the timestamp into yy/mm/dd/hh/m/s. Fetches "getActiveHearersCount (0xfbd7c9d8)" and calculates : "hearer count * chapterFee" if nextFee is due, presents result as "(amount) (token ticker symbol)". 
+Top left panel. Fetches nextFee timestamp using "nextFee (0xa0fb5d94)" at the chapter address, parses the timestamp into yy/mm/dd/hh/m/s. Fetches "getActiveHearersCount (0xfbd7c9d8)" and calculates : "hearer count * chapterFee" if nextFee is due, presents result as "(amount) (token ticker symbol)". Use "chapterToken (0x3b9e58e9)" to get chapter token. 
 
 
 **Chapter Hearer Count**
@@ -494,7 +494,7 @@ A pop-up that appears centered above everything else, can be clicked or tapped o
 Uses "hearerChapters (0x4efc3d12)" with connected "address" and index numbers from "0". Gets the returned chapter addresses and queries (10) of their latest lumens in the same manner as the Chapter Post Modal. Sorts lumens by date/time. At the end of the feed will be a "More" button, this queries and presents the next (100) Lumens on subscribed chapters. 
 
 **Subscriptions** 
-A "⚙️" symbol button at the top right of the modal, replaces the feed with a list of chapters the address is subscribed to, uses "chapterName (0x06a76993)" on each chapter to display chapter names, and "chapterFee (0x84f0f15a)" scaled based on tbe token's decimals. Each chapter card has a "Cancel" button that pushes "silence (0xfa537f74)" at the target chapter address. 
+A "⚙️" symbol button at the top right of the modal, replaces the feed with a list of chapters the address is subscribed to, uses "chapterName (0x06a76993)" on each chapter to display chapter names, and "chapterFee (0x84f0f15a)" scaled based on the token's decimals. Each chapter card has a "Cancel" button that pushes "silence (0xfa537f74)" at the target chapter address. 
 
 In each chapter card, displays "Cycles Left" as "allowance / chapterFee", displayed as "(number) Cycles left". Has "Extend" and "Cut" buttons that change allowance for the chapter, presenting a pop-up  similar to "cyclesToHear" that adjusts the IERC20 token allowance based on the provided number. 
 
